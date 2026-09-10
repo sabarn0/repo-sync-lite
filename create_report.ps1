@@ -149,9 +149,7 @@ function Get-RepoInventory {
     $Items = Get-ChildItem -LiteralPath $RootPath -Recurse -Force
 
     foreach ($item in $Items) {
-        $ItemUri = New-Object System.Uri($item.FullName)
-        $RelativeUri = $RootUri.MakeRelativeUri($ItemUri)
-        $RelativePath = [System.Uri]::UnescapeDataString($RelativeUri.ToString()).Replace('/', '\')
+        $RelativePath = $item.FullName.Substring($NormalizedRoot.Length).TrimStart('\', '/')
 
         if (Test-IsExcluded -RelativePath $RelativePath -Patterns $Patterns) {
             continue
@@ -179,7 +177,7 @@ Write-Host "Comparing differences..." -ForegroundColor Gray
 
 $ReportEntries = [System.Collections.Generic.List[PSCustomObject]]::new()
 
-# Missing: in Source but not in Target (Source - Target)
+# 1. Missing: in Source but not in Target (Source - Target)
 foreach ($relPath in $SourceInventory.Keys) {
     if (-not $TargetInventory.Contains($relPath)) {
         $sourceItem = $SourceInventory[$relPath]
@@ -197,7 +195,7 @@ foreach ($relPath in $SourceInventory.Keys) {
     }
 }
 
-# Extra: in Target but not in Source (Target - Source)
+# 2. Extra: in Target but not in Source (Target - Source)
 foreach ($relPath in $TargetInventory.Keys) {
     if (-not $SourceInventory.Contains($relPath)) {
         $targetItem = $TargetInventory[$relPath]
@@ -212,6 +210,43 @@ foreach ($relPath in $TargetInventory.Keys) {
             Action       = "MoveToBin"
             Process      = "Yes"
         })
+    }
+}
+
+# 3. Modified: present in both, but contents/sizes differ
+$ShouldDetectModified = if ($PSBoundParameters.ContainsKey('DetectModified')) { $DetectModified.IsPresent } elseif ($null -ne $Config.DetectModified) { [bool]$Config.DetectModified } else { $true }
+if ($ShouldDetectModified) {
+    foreach ($relPath in $SourceInventory.Keys) {
+        if ($TargetInventory.Contains($relPath)) {
+            $srcItem = $SourceInventory[$relPath]
+            $tgtItem = $TargetInventory[$relPath]
+
+            if ($srcItem.ItemType -eq "File" -and $tgtItem.ItemType -eq "File") {
+                $isModified = $false
+                if ($srcItem.Length -ne $tgtItem.Length) {
+                    $isModified = $true
+                } else {
+                    $srcHash = (Get-FileHash -LiteralPath $srcItem.FullName -Algorithm SHA256).Hash
+                    $tgtHash = (Get-FileHash -LiteralPath $tgtItem.FullName -Algorithm SHA256).Hash
+                    if ($srcHash -ne $tgtHash) {
+                        $isModified = $true
+                    }
+                }
+
+                if ($isModified) {
+                    $ReportEntries.Add([PSCustomObject]@{
+                        Category     = "Modified"
+                        ItemType     = "File"
+                        Name         = $srcItem.Name
+                        RelativePath = $relPath
+                        SourcePath   = $srcItem.FullName
+                        TargetPath   = $tgtItem.FullName
+                        Action       = "UpdateTarget"
+                        Process      = "No"
+                    })
+                }
+            }
+        }
     }
 }
 
@@ -243,13 +278,15 @@ function Export-ReportCsv {
 # Export Master CSV
 Export-ReportCsv -Entries $SortedEntries -Path $ReportFullPath
 
-# Export Split CSVs (representing sheets: missing, extra, process)
-$MissingReportPath = [System.IO.Path]::Combine($ReportsFullPath, "${ReportBaseName}_missing.csv")
-$ExtraReportPath   = [System.IO.Path]::Combine($ReportsFullPath, "${ReportBaseName}_extra.csv")
-$ProcessReportPath = [System.IO.Path]::Combine($ReportsFullPath, "${ReportBaseName}_process.csv")
+# Export Split CSVs (representing sheets: missing, extra, modified, process)
+$MissingReportPath  = [System.IO.Path]::Combine($ReportsFullPath, "${ReportBaseName}_missing.csv")
+$ExtraReportPath    = [System.IO.Path]::Combine($ReportsFullPath, "${ReportBaseName}_extra.csv")
+$ModifiedReportPath = [System.IO.Path]::Combine($ReportsFullPath, "${ReportBaseName}_modified.csv")
+$ProcessReportPath  = [System.IO.Path]::Combine($ReportsFullPath, "${ReportBaseName}_process.csv")
 
 Export-ReportCsv -Entries @($SortedEntries | Where-Object { $_.Category -eq "Missing" }) -Path $MissingReportPath
 Export-ReportCsv -Entries @($SortedEntries | Where-Object { $_.Category -eq "Extra" }) -Path $ExtraReportPath
+Export-ReportCsv -Entries @($SortedEntries | Where-Object { $_.Category -eq "Modified" }) -Path $ModifiedReportPath
 Export-ReportCsv -Entries @($SortedEntries | Where-Object { $_.Process -eq "Yes" }) -Path $ProcessReportPath
 
 # Summary counts
@@ -261,16 +298,24 @@ $ExtraCount   = @($SortedEntries | Where-Object { $_.Category -eq "Extra" }).Cou
 $ExtraFiles   = @($SortedEntries | Where-Object { $_.Category -eq "Extra" -and $_.ItemType -eq "File" }).Count
 $ExtraFolders = @($SortedEntries | Where-Object { $_.Category -eq "Extra" -and $_.ItemType -eq "Folder" }).Count
 
+$ModifiedCount = @($SortedEntries | Where-Object { $_.Category -eq "Modified" }).Count
+
 Write-Host "--------------------------------------------------"
 Write-Host "Difference Summary:" -ForegroundColor Green
-Write-Host "  Missing (Source - Target) : $MissingCount ($MissingFiles files, $MissingFolders folders)" -ForegroundColor Yellow
-Write-Host "  Extra   (Target - Source) : $ExtraCount ($ExtraFiles files, $ExtraFolders folders)" -ForegroundColor Magenta
-Write-Host "  Total Differences         : $($SortedEntries.Count)"
+Write-Host "  Missing  (Source - Target) : $MissingCount ($MissingFiles files, $MissingFolders folders)" -ForegroundColor Yellow
+Write-Host "  Extra    (Target - Source) : $ExtraCount ($ExtraFiles files, $ExtraFolders folders)" -ForegroundColor Magenta
+if ($ShouldDetectModified) {
+    Write-Host "  Modified (Content differs) : $ModifiedCount files" -ForegroundColor DarkCyan
+}
+Write-Host "  Total Differences          : $($SortedEntries.Count)"
 Write-Host "--------------------------------------------------"
 Write-Host "Generated Reports:" -ForegroundColor Cyan
 Write-Host "  Master Report  : $ReportFullPath"
 Write-Host "  Missing Sheet  : $MissingReportPath"
 Write-Host "  Extra Sheet    : $ExtraReportPath"
+if ($ShouldDetectModified) {
+    Write-Host "  Modified Sheet : $ModifiedReportPath"
+}
 Write-Host "  Process Sheet  : $ProcessReportPath"
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host "Review '$ReportFullPath' and adjust 'Action' or 'Process' before running merge_changes.ps1." -ForegroundColor White

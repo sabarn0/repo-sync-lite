@@ -139,11 +139,13 @@ if ($ItemsToProcess.Count -eq 0) {
     return
 }
 
-$CopyItems = @($ItemsToProcess | Where-Object { $_.Action -like "Copy*" -or ($_.Category -eq "Missing" -and -not $_.Action) })
-$MoveItems = @($ItemsToProcess | Where-Object { $_.Action -like "Move*" -or $_.Action -like "Remove*" -or ($_.Category -eq "Extra" -and -not $_.Action) })
+$CopyItems   = @($ItemsToProcess | Where-Object { $_.Action -like "Copy*" -or ($_.Category -eq "Missing" -and -not $_.Action) })
+$MoveItems   = @($ItemsToProcess | Where-Object { $_.Action -like "Move*" -or $_.Action -like "Remove*" -or ($_.Category -eq "Extra" -and -not $_.Action) })
+$UpdateItems = @($ItemsToProcess | Where-Object { $_.Action -like "Update*" -or ($_.Category -eq "Modified" -and -not $_.Action) })
 
-Write-Host "  -> Items to Copy (Missing)  : $($CopyItems.Count)"
-Write-Host "  -> Items to Bin  (Extra)    : $($MoveItems.Count)"
+Write-Host "  -> Items to Copy   (Missing)  : $($CopyItems.Count)"
+Write-Host "  -> Items to Bin    (Extra)    : $($MoveItems.Count)"
+Write-Host "  -> Items to Update (Modified) : $($UpdateItems.Count)"
 Write-Host "--------------------------------------------------"
 
 if (-not $IsWhatIf -and -not $Force) {
@@ -272,15 +274,53 @@ foreach ($item in $SortedMoveItems) {
     }
 }
 
+# Phase 3: Process Update (Modified items)
+$SuccessUpdateCount = 0
+foreach ($item in $UpdateItems) {
+    $src = $item.SourcePath
+    $dest = $item.TargetPath
+    $rel = $item.RelativePath
+    $binDest = [System.IO.Path]::Combine($SessionBinPath, "previous_versions", $rel)
+
+    try {
+        if (-not (Test-Path -LiteralPath $src)) {
+            throw "Source item not found: '$src'"
+        }
+
+        if ($IsWhatIf) {
+            Write-Host "[WHATIF] Would BACKUP target '$rel' -> '$binDest' and OVERWRITE from source" -ForegroundColor Cyan
+        } else {
+            if (Test-Path -LiteralPath $dest) {
+                $binParent = [System.IO.Path]::GetDirectoryName($binDest)
+                if (-not (Test-Path -LiteralPath $binParent)) {
+                    $null = New-Item -ItemType Directory -Path $binParent -Force
+                }
+                Copy-Item -LiteralPath $dest -Destination $binDest -Force
+            }
+            Copy-Item -LiteralPath $src -Destination $dest -Force
+            Write-Host "[UPDATED] '$rel'" -ForegroundColor Green
+        }
+        $SuccessUpdateCount++
+    } catch {
+        Write-Host "[ERROR] Failed updating '$rel': $($_.Exception.Message)" -ForegroundColor Red
+        $ErrorList.Add([PSCustomObject]@{
+            RelativePath = $rel
+            Action       = "UpdateTarget"
+            Error        = $_.Exception.Message
+        })
+    }
+}
+
 Write-Host "--------------------------------------------------"
 Write-Host "Execution Summary:" -ForegroundColor Green
-Write-Host "  Items Copied (Missing)   : $SuccessCopyCount" -ForegroundColor Green
+Write-Host "  Items Copied (Missing)    : $SuccessCopyCount" -ForegroundColor Green
 Write-Host "  Items Moved to Bin (Extra): $SuccessMoveCount" -ForegroundColor Magenta
-Write-Host "  Items Skipped            : $SkippedCount" -ForegroundColor Gray
-Write-Host "  Errors Encountered       : $($ErrorList.Count)" -ForegroundColor $(if ($ErrorList.Count -gt 0) { "Red" } else { "Green" })
+Write-Host "  Items Updated (Modified)  : $SuccessUpdateCount" -ForegroundColor DarkCyan
+Write-Host "  Items Skipped             : $SkippedCount" -ForegroundColor Gray
+Write-Host "  Errors Encountered        : $($ErrorList.Count)" -ForegroundColor $(if ($ErrorList.Count -gt 0) { "Red" } else { "Green" })
 
-if (-not $IsWhatIf -and $SuccessMoveCount -gt 0) {
-    Write-Host "Extra items safely archived in : $SessionBinPath" -ForegroundColor Cyan
+if (-not $IsWhatIf -and ($SuccessMoveCount -gt 0 -or $SuccessUpdateCount -gt 0)) {
+    Write-Host "Archived items safely stored in : $SessionBinPath" -ForegroundColor Cyan
 }
 
 if ($ErrorList.Count -gt 0) {

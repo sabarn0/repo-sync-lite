@@ -1,17 +1,13 @@
-{
-  "SourcePath": "C:/Users/sabar/OneDrive/Desktop/VS/tool/repo-sync-lite/repo-test/source/ipynb to pdf/input",
-  "TargetPath": "C:/Users/sabar/OneDrive/Desktop/VS/tool/repo-sync-lite/repo-test/target/ipynb to pdf/input",
+﻿{
+  "SourcePath": "./source",
+  "TargetPath": "./target",
   "BinPath": "./temp_bin",
   "ReportsDir": "./reports",
-  "ReportName": "test-report2.csv",
+  "ReportName": "report.csv",
+  "DetectModified": true,
   "ExcludePatterns": [
     ".git",
     ".vs",
-    ".idea",
-    "node_modules",
-    "bin",
-    "obj",
-    ".DS_Store",
-    "Thumbs.db"
+    ".idea"
   ]
 }
