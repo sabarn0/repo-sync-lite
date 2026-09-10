@@ -1,0 +1,17 @@
+{
+  "SourcePath": "C:/Users/sabar/OneDrive/Desktop/VS/tool/repo-sync-lite/repo-test/source/ipynb to pdf/input",
+  "TargetPath": "C:/Users/sabar/OneDrive/Desktop/VS/tool/repo-sync-lite/repo-test/target/ipynb to pdf/input",
+  "BinPath": "./temp_bin",
+  "ReportsDir": "./reports",
+  "ReportName": "test-report1.csv",
+  "ExcludePatterns": [
+    ".git",
+    ".vs",
+    ".idea",
+    "node_modules",
+    "bin",
+    "obj",
+    ".DS_Store",
+    "Thumbs.db"
+  ]
+}
