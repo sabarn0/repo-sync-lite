@@ -127,8 +127,8 @@ function Test-IsExcluded {
                 return $true
             }
         }
-        # Also check against full relative path
-        if ($RelativePath -like "*$pattern*" -or $RelativePath -like $pattern) {
+        # Also check against full relative path if pattern contains a path separator
+        if ($pattern -match '[\\/]' -and ($RelativePath -like "*$pattern*" -or $RelativePath -like $pattern)) {
             return $true
         }
     }
@@ -142,7 +142,8 @@ function Get-RepoInventory {
         [string[]]$Patterns
     )
     $Inventory = [ordered]@{}
-    $RootUri = New-Object System.Uri(($RootPath.TrimEnd('\') + '\'))
+    $NormalizedRoot = $RootPath.TrimEnd('\', '/')
+    $RootUri = New-Object System.Uri(($NormalizedRoot + [System.IO.Path]::DirectorySeparatorChar))
 
     Write-Host "Scanning '$RootPath'..." -ForegroundColor Gray
     $Items = Get-ChildItem -LiteralPath $RootPath -Recurse -Force
@@ -225,22 +226,31 @@ $SortedEntries = $ReportEntries | Sort-Object Category, @{
     }
 }, RelativePath
 
+# Helper to export CSV ensuring headers exist even when empty
+function Export-ReportCsv {
+    param (
+        [array]$Entries,
+        [string]$Path
+    )
+    if (-not $Entries -or $Entries.Count -eq 0) {
+        $header = '"Category","ItemType","Name","RelativePath","SourcePath","TargetPath","Action","Process"'
+        [System.IO.File]::WriteAllText($Path, $header + "`r`n", [System.Text.Encoding]::UTF8)
+    } else {
+        $Entries | Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8
+    }
+}
+
 # Export Master CSV
-$SortedEntries | Export-Csv -LiteralPath $ReportFullPath -NoTypeInformation -Encoding UTF8
+Export-ReportCsv -Entries $SortedEntries -Path $ReportFullPath
 
 # Export Split CSVs (representing sheets: missing, extra, process)
 $MissingReportPath = [System.IO.Path]::Combine($ReportsFullPath, "${ReportBaseName}_missing.csv")
 $ExtraReportPath   = [System.IO.Path]::Combine($ReportsFullPath, "${ReportBaseName}_extra.csv")
 $ProcessReportPath = [System.IO.Path]::Combine($ReportsFullPath, "${ReportBaseName}_process.csv")
 
-($SortedEntries | Where-Object { $_.Category -eq "Missing" }) |
-    Export-Csv -LiteralPath $MissingReportPath -NoTypeInformation -Encoding UTF8
-
-($SortedEntries | Where-Object { $_.Category -eq "Extra" }) |
-    Export-Csv -LiteralPath $ExtraReportPath -NoTypeInformation -Encoding UTF8
-
-($SortedEntries | Where-Object { $_.Process -eq "Yes" }) |
-    Export-Csv -LiteralPath $ProcessReportPath -NoTypeInformation -Encoding UTF8
+Export-ReportCsv -Entries @($SortedEntries | Where-Object { $_.Category -eq "Missing" }) -Path $MissingReportPath
+Export-ReportCsv -Entries @($SortedEntries | Where-Object { $_.Category -eq "Extra" }) -Path $ExtraReportPath
+Export-ReportCsv -Entries @($SortedEntries | Where-Object { $_.Process -eq "Yes" }) -Path $ProcessReportPath
 
 # Summary counts
 $MissingCount = @($SortedEntries | Where-Object { $_.Category -eq "Missing" }).Count

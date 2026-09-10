@@ -3,7 +3,7 @@
   "TargetPath": "C:/Users/sabar/OneDrive/Desktop/VS/tool/repo-sync-lite/repo-test/target/ipynb to pdf/input",
   "BinPath": "./temp_bin",
   "ReportsDir": "./reports",
-  "ReportName": "test-report1.csv",
+  "ReportName": "test-report2.csv",
   "ExcludePatterns": [
     ".git",
     ".vs",
